@@ -1,6 +1,5 @@
 import os
 import json
-import traceback
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from pymongo import MongoClient
@@ -24,7 +23,7 @@ if not MONGO_URL:
 
 mongo_client = MongoClient(MONGO_URL)
 db = mongo_client["wordcrack"]
-words_col = db["words"]  # 你的 6009 單字 + embedding
+words_col = db["words"]
 
 # =====================================================
 # OpenAI
@@ -32,13 +31,11 @@ words_col = db["words"]  # 你的 6009 單字 + embedding
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-# Flask
 app = Flask(__name__)
 CORS(app)
 
-
 # =====================================================
-# Health Check（MongoDB）
+# Health Check
 # =====================================================
 @app.route("/api/health")
 def health():
@@ -50,15 +47,15 @@ def health():
 
 
 # =====================================================
-# Helper：把 Mongo 格式轉成前端格式
+# 將 Mongo 文件轉成前端格式
 # =====================================================
 def doc_to_dict(doc):
     return {
         "id": str(doc.get("_id")),
-        "word": doc.get("單字") or doc.get("word"),
-        "chinese": doc.get("中文") or "",
-        "part_of_speech": doc.get("屬性") or "",
-        "level": doc.get("級別") or "",
+        "word": doc.get("word"),
+        "chinese": doc.get("chinese"),
+        "part_of_speech": doc.get("part_of_speech"),
+        "level": doc.get("level"),
     }
 
 
@@ -67,7 +64,7 @@ def doc_to_dict(doc):
 # =====================================================
 @app.route("/api/words")
 def get_words():
-    cursor = words_col.find({}, {"embedding": 0}).sort("單字", 1)
+    cursor = words_col.find({}, {"embedding": 0}).sort("word", 1)
     return jsonify([doc_to_dict(x) for x in cursor])
 
 
@@ -83,15 +80,21 @@ def search():
     regex = {"$regex": q, "$options": "i"}
 
     cursor = words_col.find(
-        {"$or": [{"單字": regex}, {"中文": regex}, {"屬性": regex}]},
+        {
+            "$or": [
+                {"word": regex},
+                {"chinese": regex},
+                {"part_of_speech": regex},
+            ]
+        },
         {"embedding": 0}
-    ).sort("單字", 1)
+    ).sort("word", 1)
 
     return jsonify([doc_to_dict(x) for x in cursor])
 
 
 # =====================================================
-# ⭐ Vector Search（重點）
+# ⭐ Vector Search
 # =====================================================
 @app.route("/api/words/similar_db", methods=["POST"])
 def similar_db():
@@ -102,18 +105,18 @@ def similar_db():
     if not word:
         return jsonify([])
 
-    # 1. 找到該字本身的 embedding
-    base = words_col.find_one({"單字": word})
+    # 找該字的 embedding
+    base = words_col.find_one({"word": word})
     if not base or "embedding" not in base:
         return jsonify([])
 
     query_vec = base["embedding"]
 
-    # 2. MongoDB Atlas Vector Search Pipeline
+    # 使用 MongoDB Atlas Vector Search
     pipeline = [
         {
             "$vectorSearch": {
-                "index": "embedding_index",
+                "index": "embedding_index",     # 你 Atlas 上的索引名稱
                 "path": "embedding",
                 "queryVector": query_vec,
                 "numCandidates": 200,
@@ -122,10 +125,10 @@ def similar_db():
         },
         {
             "$project": {
-                "單字": 1,
-                "中文": 1,
-                "屬性": 1,
-                "級別": 1,
+                "word": 1,
+                "chinese": 1,
+                "part_of_speech": 1,
+                "level": 1,
                 "score": {"$meta": "vectorSearchScore"}
             }
         }
@@ -133,17 +136,16 @@ def similar_db():
 
     docs = list(words_col.aggregate(pipeline))
 
-    # 去掉自己
     results = []
     for d in docs:
-        if d.get("單字") == word:
+        if d.get("word") == word:
             continue
 
         results.append({
-            "word": d.get("單字"),
-            "chinese": d.get("中文", ""),
-            "part_of_speech": d.get("屬性", ""),
-            "level": d.get("級別", ""),
+            "word": d.get("word"),
+            "chinese": d.get("chinese", ""),
+            "part_of_speech": d.get("part_of_speech", ""),
+            "level": d.get("level", ""),
             "score": d.get("score")
         })
 
@@ -154,7 +156,7 @@ def similar_db():
 
 
 # =====================================================
-# ⭐ 例句（OpenAI）
+# ⭐ 例句生成
 # =====================================================
 @app.route("/api/words/sentence", methods=["POST"])
 def sentence():
