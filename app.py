@@ -37,7 +37,7 @@ app = Flask(__name__)
 CORS(app)
 
 # =====================================================
-# Helper：Convert + Fix NaN
+# Helpers
 # =====================================================
 def doc_to_dict(doc):
     return {
@@ -79,7 +79,7 @@ def get_words():
         return jsonify({"error": str(e)}), 500
 
 # =====================================================
-# Search by letter
+# Search by First Letter
 # =====================================================
 @app.route("/api/words/by_letter/<letter>")
 def by_letter(letter):
@@ -88,7 +88,7 @@ def by_letter(letter):
     return jsonify([fix_doc(doc_to_dict(x)) for x in cursor])
 
 # =====================================================
-# Search
+# General Search
 # =====================================================
 @app.route("/api/search")
 def search():
@@ -220,7 +220,8 @@ def sentence():
         })
 
 # =====================================================
-# RUN SERVER
+# RUN SERVER — Railway Friendly
 # =====================================================
 if __name__ == "__main__":
-    app.run(port=5001, debug=True)
+    port = int(os.environ.get("PORT", 5001))
+    app.run(host="0.0.0.0", port=port)
