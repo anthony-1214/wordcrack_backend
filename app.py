@@ -27,7 +27,7 @@ db = mongo_client["wordcrack"]
 words_col = db["words"]
 
 # =========================================
-# OpenAI API
+# OpenAI
 # =========================================
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
@@ -36,7 +36,7 @@ app = Flask(__name__)
 CORS(app)
 
 # =========================================
-# Helper：格式轉換 + 修正 NaN
+# Helper
 # =========================================
 def doc_to_dict(doc):
     return {
@@ -67,7 +67,7 @@ def health():
         return jsonify({"ok": False})
 
 # =========================================
-# 取得所有單字
+# 取得全部單字
 # =========================================
 @app.route("/api/words")
 def get_words():
@@ -117,7 +117,7 @@ def words_by_level(lvl):
     return jsonify([fix_doc(doc_to_dict(x)) for x in cursor])
 
 # =========================================
-# Vector Search（同義字）
+# 向量相似度（同義字）
 # =========================================
 @app.route("/api/words/similar_db", methods=["POST"])
 def similar_db():
@@ -176,35 +176,55 @@ def similar_db():
     return jsonify(results)
 
 # =========================================
-# AI 單字例句
+# 🔥 AI 例句（強化 JSON Parser，不會再報錯）
 # =========================================
 @app.route("/api/words/sentence", methods=["POST"])
 def sentence():
     data = request.get_json(force=True)
     word = data.get("word", "").strip()
 
+    # 沒 key 或沒字 → fallback
     if not OPENAI_API_KEY or not word:
         return jsonify({
             "sentence": f"I saw the word '{word}' today.",
             "translation": f"我今天看到了「{word}」。"
         })
 
+    # 💬 Prompt：強制只能輸出 JSON
     prompt = f"""
-你是一位英文老師。請為單字「{word}」寫一個自然、生活化的英文例句（至少 10 字）。
-務必只輸出 JSON。
+請嚴格輸出以下 JSON 格式（不要加任何多餘文字）：
+
+{{
+  "sentence": "英文例句（至少 10 個字）",
+  "translation": "中文翻譯"
+}}
+
+單字：{word}
     """
 
     try:
         res = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}]
         )
 
         raw = res.choices[0].message.content.strip()
+
+        # -------- 修正 OpenAI 可能輸出 code block --------
+        raw = raw.replace("```json", "").replace("```", "").strip()
+
+        # -------- 自動擷取 JSON 區塊 --------
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start != -1 and end != -1:
+            raw = raw[start:end+1]
+
+        # -------- 解析 JSON --------
         response_json = json.loads(raw)
         return jsonify(response_json)
 
     except Exception as e:
+        # fallback（不會壞）
         return jsonify({
             "sentence": f"I used the word '{word}' today.",
             "translation": f"我今天用了「{word}」。",
@@ -212,7 +232,7 @@ def sentence():
         })
 
 # =========================================
-# RUN (for Railway)
+# RUN (for Render)
 # =========================================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
